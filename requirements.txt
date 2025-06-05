@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+insightface
+onnxruntime
+matplotlib
+opencv-python-headless
+python-multipart
+requests
+cloudinary
