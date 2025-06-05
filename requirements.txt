@@ -1,9 +1,9 @@
 fastapi
 uvicorn
 insightface
-onnxruntime
-matplotlib
-opencv-python-headless
-python-multipart
-requests
+onnxruntime-gpu
 cloudinary
+opencv-python
+numpy
+requests
+pydantic

@@ -35,7 +35,15 @@ cloud_config(
 )
 
 # Init face swap
-providers = ["CPUExecutionProvider"]
+# Detect GPU availability
+try:
+    import onnxruntime
+    available_providers = onnxruntime.get_available_providers()
+    providers = ["CUDAExecutionProvider"] if "CUDAExecutionProvider" in available_providers else ["CPUExecutionProvider"]
+    print(f"🔧 Using provider: {providers[0]}")
+except:
+    providers = ["CPUExecutionProvider"]
+
 face_analyzer = insightface.app.FaceAnalysis(name='buffalo_l', root='models', providers=providers)
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 swapper = insightface.model_zoo.get_model("models/inswapper_128.onnx", providers=providers)
