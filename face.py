@@ -115,8 +115,13 @@ async def swap_batch(data: SwapRequest):
 
                     result = swapper.get(tgt_img.copy(), tgt_faces[0], src_face, paste_back=True)
 
-                    # Enhance with GFPGAN only
-                    _, _, restored_img = gfpgan.enhance(result, has_aligned=False, only_center_face=False, paste_back=True)
+                    # Run face detection again after swap to validate for GFPGAN
+                    recheck_faces = face_analyzer.get(result)
+                    if not recheck_faces:
+                        print(f"⚠️ Skipping GFPGAN for {variation_obj.variation}: no face after swap")
+                        restored_img = result
+                    else:
+                        _, _, restored_img = gfpgan.enhance(result, has_aligned=False, only_center_face=False, paste_back=True)
 
                     temp_path = f"/tmp/page-{page_num}-{variation_obj.variation}.jpg"
                     cv2.imwrite(temp_path, restored_img)
