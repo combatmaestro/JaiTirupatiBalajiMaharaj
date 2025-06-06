@@ -9,6 +9,7 @@ from typing import List
 from cloudinary.uploader import upload as cloud_upload
 from cloudinary import config as cloud_config
 from concurrent.futures import ThreadPoolExecutor
+from gfpgan import GFPGANer
 
 # ------------------ Setup ------------------
 # Auto-setup models if not found
@@ -23,9 +24,9 @@ def setup_models():
         print("⬇️ Downloading inswapper_128.onnx...")
         url = "https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx"
         urllib.request.urlretrieve(url, "models/inswapper_128.onnx")
-        
-    if not os.path.exists('GFPGANv1.4.pth'):
-    os.system("wget https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth -P .")
+
+    if not os.path.exists("models/GFPGANv1.4.pth"):
+        os.system("wget https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth -P models")
 
 setup_models()
 
@@ -50,6 +51,15 @@ except:
 face_analyzer = insightface.app.FaceAnalysis(name='buffalo_l', root='models', providers=providers)
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 swapper = insightface.model_zoo.get_model("models/inswapper_128.onnx", providers=providers)
+
+# Load GFPGAN
+gfpgan = GFPGANer(
+    model_path="models/GFPGANv1.4.pth",
+    upscale=1,
+    arch='clean',
+    channel_multiplier=2,
+    bg_upsampler=None
+)
 
 # Thread executor
 executor = ThreadPoolExecutor(max_workers=5)
@@ -80,22 +90,6 @@ def url_to_image(url):
         print(f"❌ Error downloading image: {url}")
         raise e
 
-def blend_face(src_face, tgt_face, target_img):
-    swapped = swapper.get(target_img.copy(), tgt_face, src_face, paste_back=True)
-
-    landmarks = tgt_face.landmark_3d_68[:, :2].astype(np.int32)
-    mask = np.zeros(target_img.shape[:2], dtype=np.uint8)
-    cv2.fillConvexPoly(mask, cv2.convexHull(landmarks), 255)
-    mask = cv2.GaussianBlur(mask, (15, 15), 5)
-
-    alpha = mask[..., None] / 255.0
-    output = (swapped.astype(np.float32) * alpha +
-              target_img.astype(np.float32) * (1.0 - alpha))
-    output = np.clip(output, 0, 255).astype(np.uint8)
-
-    sharpen = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    return cv2.filter2D(output, -1, sharpen)
-
 # ------------------ Swap Endpoint ------------------
 @app.post("/swap-batch")
 async def swap_batch(data: SwapRequest):
@@ -118,9 +112,14 @@ async def swap_batch(data: SwapRequest):
                     tgt_faces = face_analyzer.get(tgt_img)
                     if not tgt_faces:
                         return (variation_obj.variation, None)
-                    result = blend_face(src_face, tgt_faces[0], tgt_img)
+
+                    result = swapper.get(tgt_img.copy(), tgt_faces[0], src_face, paste_back=True)
+
+                    # Enhance with GFPGAN only
+                    _, _, restored_img = gfpgan.enhance(result, has_aligned=False, only_center_face=False, paste_back=True)
+
                     temp_path = f"/tmp/page-{page_num}-{variation_obj.variation}.jpg"
-                    cv2.imwrite(temp_path, result)
+                    cv2.imwrite(temp_path, restored_img)
                     cloud_result = cloud_upload(temp_path)
                     os.remove(temp_path)
                     return (variation_obj.variation, cloud_result["secure_url"])
