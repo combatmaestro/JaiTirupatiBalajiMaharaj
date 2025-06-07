@@ -28,7 +28,7 @@ if not os.path.exists(INSWAPPER_PATH):
     print("📥 Downloading inswapper_128.onnx...")
     import urllib.request
     urllib.request.urlretrieve(
-        'https://huggingface.co/henryruhs/inswapper_128/resolve/main/inswapper_128.onnx',
+        'https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx',
         INSWAPPER_PATH
     )
     print("✅ inswapper_128.onnx downloaded.")
