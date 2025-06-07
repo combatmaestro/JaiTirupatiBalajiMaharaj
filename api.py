@@ -117,7 +117,7 @@ async def swap_batch(data: SwapRequest):
                 if not target_faces:
                     print(f"❌ No face in target image: {variation.target_image_url}")
                     continue
-
+                swapped = target_img.copy()
                 for tgt_face in target_faces:
                     swapped = swapper.get(swapped, tgt_face, src_face, paste_back=True)
                 # Enhance with GFPGAN
