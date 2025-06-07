@@ -60,7 +60,7 @@ gfpgan = GFPGANer(
     upscale=1,
     arch='clean',
     channel_multiplier=2,
-    bg_upsampler=None.
+    bg_upsampler=None,
     device='cuda'
 )
 
