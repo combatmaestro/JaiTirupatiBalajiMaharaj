@@ -46,13 +46,13 @@ face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
     download=False,
-    providers=['CUDAExecutionProvider','CPUExecutionProvider'],
+    providers=['CUDAExecutionProvider'],
     allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"]
 )
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 
 # ---- Load Face Swap Model ----
-swapper = get_model(INSWAPPER_PATH,providers=['CUDAExecutionProvider','CPUExecutionProvider'])
+swapper = get_model(INSWAPPER_PATH,providers=['CUDAExecutionProvider'])
 
 # ---- Load GFPGAN Enhancer ----
 gfpgan = GFPGANer(
