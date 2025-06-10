@@ -24,24 +24,24 @@ MODEL_DIR = 'models'
 INSWAPPER_PATH = os.path.join(MODEL_DIR,'inswapper_128.onnx')
 GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
 # ---- Download if Missing ----
-# if not os.path.exists(INSWAPPER_PATH):
-#     print("📥 Downloading inswapper_128.onnx...")
-#     import urllib.request
-#     urllib.request.urlretrieve(
-#         'https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx',
-#         INSWAPPER_PATH
-#     )
-#     print("✅ inswapper_128.onnx downloaded.")
+if not os.path.exists(INSWAPPER_PATH):
+    print("📥 Downloading inswapper_128.onnx...")
+    import urllib.request
+    urllib.request.urlretrieve(
+        'https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx',
+        INSWAPPER_PATH
+    )
+    print("✅ inswapper_128.onnx downloaded.")
 
-# if not os.path.exists(GFPGAN_PATH):
-#     print("📥 Downloading GFPGANv1.4.pth...")
-#     import urllib.request
-#     urllib.request.urlretrieve(
-#         'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
-#         GFPGAN_PATH
-#     )
-#     print("✅ GFPGANv1.4.pth downloaded.")
-# ---- Initialize FaceAnalysis ----
+if not os.path.exists(GFPGAN_PATH):
+    print("📥 Downloading GFPGANv1.4.pth...")
+    import urllib.request
+    urllib.request.urlretrieve(
+        'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
+        GFPGAN_PATH
+    )
+    print("✅ GFPGANv1.4.pth downloaded.")
+---- Initialize FaceAnalysis ----
 face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
