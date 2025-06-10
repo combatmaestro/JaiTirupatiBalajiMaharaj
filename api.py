@@ -41,7 +41,7 @@ if not os.path.exists(GFPGAN_PATH):
         GFPGAN_PATH
     )
     print("✅ GFPGANv1.4.pth downloaded.")
----- Initialize FaceAnalysis ----
+# ---- Initialize FaceAnalysis ----
 face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
