@@ -3,6 +3,7 @@ from PIL import Image
 from models.e4e_encoder import E4EEncoder
 from models.stylegan2_generator import StyleGAN2Generator
 import numpy as np
+import cv2
 
 def average_latents(latents):
     return torch.mean(torch.stack(latents), dim=0, keepdim=True)
