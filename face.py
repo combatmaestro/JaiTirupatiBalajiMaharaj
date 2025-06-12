@@ -21,7 +21,7 @@ cloud_config(
 
 # ---- Model Paths ----
 MODEL_DIR = 'models'
-INSWAPPER_PATH = 'inswapper_128.onnx'
+INSWAPPER_PATH = 'models/inswapper_128.onnx'
 GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
 
 # ---- Initialize FaceAnalysis ----
