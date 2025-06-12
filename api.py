@@ -2,6 +2,7 @@ import os
 import cv2
 import requests
 import numpy as np
+import tempfile
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
@@ -10,6 +11,7 @@ from cloudinary import config as cloud_config
 from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
 from gfpgan import GFPGANer
+from concurrent.futures import ThreadPoolExecutor
 
 # ---- Cloudinary Configuration ----
 cloud_config(
@@ -21,14 +23,15 @@ cloud_config(
 
 # ---- Model Paths ----
 MODEL_DIR = 'models'
-INSWAPPER_PATH = os.path.join(MODEL_DIR,'inswapper_128.onnx')
+INSWAPPER_PATH = os.path.join(MODEL_DIR, 'inswapper_128.onnx')
 GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
+
 # ---- Download if Missing ----
 if not os.path.exists(INSWAPPER_PATH):
     print("📥 Downloading inswapper_128.onnx...")
     import urllib.request
     urllib.request.urlretrieve(
-        'https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx',
+        'https://huggingface.co/combatmaestro/inswapper_128.onxx/resolve/main/inswapper_128.onnx',
         INSWAPPER_PATH
     )
     print("✅ inswapper_128.onnx downloaded.")
@@ -41,7 +44,8 @@ if not os.path.exists(GFPGAN_PATH):
         GFPGAN_PATH
     )
     print("✅ GFPGANv1.4.pth downloaded.")
-# ---- Initialize FaceAnalysis ----
+
+# ---- Initialize Models (once) ----
 face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
@@ -51,10 +55,8 @@ face_analyzer = FaceAnalysis(
 )
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 
-# ---- Load Face Swap Model ----
-swapper = get_model(INSWAPPER_PATH,providers=['CUDAExecutionProvider'])
+swapper = get_model(INSWAPPER_PATH, providers=['CUDAExecutionProvider'])
 
-# ---- Load GFPGAN Enhancer ----
 gfpgan = GFPGANer(
     model_path=GFPGAN_PATH,
     upscale=1,
@@ -80,17 +82,43 @@ class SwapRequest(BaseModel):
 
 # ---- App ----
 app = FastAPI()
-
+executor = ThreadPoolExecutor(max_workers=4)
 
 # ---- Utility ----
 def url_to_image(url: str) -> np.ndarray:
     try:
-        resp = requests.get(url)
+        resp = requests.get(url, timeout=30)
         resp.raise_for_status()
         img_array = np.asarray(bytearray(resp.content), dtype="uint8")
         return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
     except:
         raise HTTPException(status_code=400, detail=f"Failed to download image: {url}")
+
+def process_variation(src_face, page_number, variation: VariationInput):
+    try:
+        target_img = url_to_image(variation.target_image_url)
+        target_faces = face_analyzer.get(target_img)
+        if not target_faces:
+            print(f"❌ No face in target image: {variation.target_image_url}")
+            return variation.variation, None
+
+        swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
+
+        _, _, enhanced = gfpgan.enhance(
+            swapped,
+            has_aligned=False,
+            only_center_face=False,
+            paste_back=True
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            cv2.imwrite(tmp.name, enhanced)
+            uploaded = cloud_upload(tmp.name)
+            return variation.variation, uploaded["secure_url"]
+
+    except Exception as e:
+        print(f"❌ Error processing {variation.variation}: {e}")
+        return variation.variation, None
 
 # ---- Endpoint ----
 @app.post("/swap-batch")
@@ -100,8 +128,8 @@ async def swap_batch(data: SwapRequest):
         source_faces = face_analyzer.get(source_img)
         if not source_faces:
             raise HTTPException(status_code=400, detail="❌ No face found in face_image_url")
-
         src_face = source_faces[0]
+
         output = []
 
         for page in data.pages:
@@ -111,29 +139,15 @@ async def swap_batch(data: SwapRequest):
                 "variations": {}
             }
 
-            for variation in page.variations:
-                target_img = url_to_image(variation.target_image_url)
-                target_faces = face_analyzer.get(target_img)
+            futures = [
+                executor.submit(process_variation, src_face, page.pageNumber, variation)
+                for variation in page.variations
+            ]
 
-                if not target_faces:
-                    print(f"❌ No face in target image: {variation.target_image_url}")
-                    continue
-                swapped = target_img.copy()
-                for tgt_face in target_faces:
-                    swapped = swapper.get(swapped, tgt_face, src_face, paste_back=True)
-                # Enhance with GFPGAN
-                _, _, enhanced = gfpgan.enhance(
-                    swapped,
-                    has_aligned=False,
-                    only_center_face=False,
-                    paste_back=True
-                )
-
-                temp_path = f"/tmp/page-{page.pageNumber}-{variation.variation}.jpg"
-                cv2.imwrite(temp_path, enhanced)
-
-                uploaded = cloud_upload(temp_path)
-                page_result["variations"][variation.variation] = uploaded["secure_url"]
+            for future in futures:
+                var_name, var_url = future.result()
+                if var_url:
+                    page_result["variations"][var_name] = var_url
 
             output.append(page_result)
 
