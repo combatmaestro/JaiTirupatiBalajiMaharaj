@@ -108,8 +108,15 @@ def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=
     for _ in range(steps):
         optimizer.zero_grad()
         synth = generator.synthesize(latent)
-        synth_np = cv2.cvtColor(np.array(synth.detach().cpu().squeeze().permute(1,2,0).numpy()*255, dtype=np.uint8), cv2.COLOR_RGB2BGR)
-        faces = face_analyzer.get(synth_np)
+
+        if isinstance(synth, torch.Tensor):
+            synth_np = synth.detach().cpu().squeeze().permute(1, 2, 0).numpy()
+            synth_np = (synth_np * 255).clip(0, 255).astype(np.uint8)
+        else:
+            synth_np = np.array(synth)
+
+        synth_bgr = cv2.cvtColor(synth_np, cv2.COLOR_RGB2BGR)
+        faces = face_analyzer.get(synth_bgr)
         if not faces:
             continue
         emb = torch.tensor(faces[0].embedding, dtype=torch.float32).to(latent.device)
@@ -117,6 +124,7 @@ def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=
         id_loss = 1 - torch.nn.functional.cosine_similarity(emb.unsqueeze(0), target_emb_tensor.unsqueeze(0)).mean()
         id_loss.backward()
         optimizer.step()
+
     return latent.detach()
 
 # ---- New Blending Logic: Interpolated + Optimized Head ----
