@@ -43,10 +43,10 @@ def download_if_missing():
     }
     for path, url in files.items():
         if not os.path.exists(path):
-            print(f"\U0001F4E5 Downloading {os.path.basename(path)}...")
+            print(f"📥 Downloading {os.path.basename(path)}...")
             import urllib.request
             urllib.request.urlretrieve(url, path)
-            print(f"\u2705 {os.path.basename(path)} downloaded.")
+            print(f"✅ {os.path.basename(path)} downloaded.")
 
 # ---- Setup ----
 download_if_missing()
@@ -54,8 +54,8 @@ download_if_missing()
 available_providers = ort.get_available_providers()
 use_cuda = 'CUDAExecutionProvider' in available_providers
 preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_cuda else ['CPUExecutionProvider']
-print(f"\U0001F680 Available Providers: {available_providers}")
-print(f"\u2705 Using: {preferred_providers[0]}")
+print(f"🚀 Available Providers: {available_providers}")
+print(f"✅ Using: {preferred_providers[0]}")
 
 # ---- Initialize Models ----
 try:
@@ -132,7 +132,15 @@ def process_variation(blended_face: np.ndarray, page_number, variation: Variatio
             print(f"❌ No face in: {variation.target_image_url}")
             return variation.variation, None
 
-        swapped = swapper.get(target_img, target_faces[0], blended_face, paste_back=True)
+        # Convert the blended_face to a Face object
+        blended_faces = face_analyzer.get(blended_face)
+        if not blended_faces:
+            print(f"❌ No face found in blended face image for variation {variation.variation}")
+            return variation.variation, None
+
+        blended_face_obj = blended_faces[0]
+
+        swapped = swapper.get(target_img, target_faces[0], blended_face_obj, paste_back=True)
 
         if swapped is None or not isinstance(swapped, np.ndarray):
             print(f"⚠️ Swapped image invalid for {variation.variation}")
@@ -184,5 +192,5 @@ async def swap_batch(data: SwapRequest):
 
     except Exception as e:
         print("❌ Exception in /swap-batch:")
-        traceback.print_exc()  # 🔥 Logs the full Python error traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"❌ Error: {str(e)}")
