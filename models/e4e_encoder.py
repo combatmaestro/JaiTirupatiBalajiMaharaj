@@ -8,15 +8,27 @@ class E4EEncoder:
         if not os.path.exists(model_path):
             import urllib.request
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            print("\U0001F4E5 Downloading e4e model...")
+            print("📥 Downloading e4e model...")
             urllib.request.urlretrieve(
                 'https://huggingface.co/AIRI-Institute/HairFastGAN/resolve/main/pretrained_models/encoder4editing/e4e_ffhq_encode.pt',
                 model_path
             )
+            print("✅ e4e model downloaded.")
 
         self.device = device
-        self.model = torch.load(model_path, map_location=device)
-        self.model.eval()
+        ckpt = torch.load(model_path, map_location=device)
+
+        if isinstance(ckpt, dict) and 'state_dict' in ckpt:
+            from models.psp import pSp
+            opts_dict = ckpt['opts']
+            opts_dict['checkpoint_path'] = model_path
+            opts = type('obj', (object,), opts_dict)  # dict to object
+            self.model = pSp(opts)
+            self.model.load_state_dict(ckpt['state_dict'])
+        else:
+            self.model = ckpt
+
+        self.model.to(device).eval()
 
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
