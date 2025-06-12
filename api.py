@@ -166,7 +166,7 @@ def process_variation(blended_face: np.ndarray, page_number, variation: Variatio
 @app.post("/swap-batch")
 async def swap_batch(data: SwapRequest):
     try:
-        src_faces = [url_to_image(url) for url in data.face_image_urls]
+        src_faces = [cv2.cvtColor(url_to_image(url), cv2.COLOR_BGR2RGB) for url in data.face_image_urls]
         blended_face = get_blended_face(src_faces, STYLEGAN_PATH, E4E_ENCODER_PATH, use_cuda)
 
         output = []

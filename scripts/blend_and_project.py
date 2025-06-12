@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 def average_latents(latents):
-    return torch.mean(torch.stack(latents), dim=0, keepdim=True)
+    return torch.mean(torch.stack(latents), dim=0, keepdim=True)  # Shape: [1, 512]
 
 def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
     device = 'cuda' if use_cuda else 'cpu'
@@ -23,9 +23,14 @@ def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
         else:
             raise ValueError("Unsupported image type in get_blended_face")
 
+    # Encode images to latent vectors
     latents = [encoder.encode(pil_img) for pil_img in pil_images]
-    avg_latent = average_latents(latents)
-    result_image = generator.synthesize(avg_latent)
+    avg_latent = average_latents(latents)  # [1, 512]
 
-    # Convert PIL result image to OpenCV BGR numpy array
+    # StyleGAN2 expects [1, 18, 512]
+    repeated_latent = avg_latent.repeat(1, generator.n_latent, 1)  # [1, 18, 512]
+
+    result_image = generator.synthesize(repeated_latent)
+
+    # Convert result to OpenCV format (BGR)
     return cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
