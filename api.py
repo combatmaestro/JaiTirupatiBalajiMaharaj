@@ -13,6 +13,8 @@ from insightface.model_zoo import get_model
 from gfpgan import GFPGANer
 from concurrent.futures import ThreadPoolExecutor
 import onnxruntime as ort
+from PIL import Image
+from io import BytesIO
 
 # ---- Cloudinary Configuration ----
 cloud_config(
@@ -90,16 +92,32 @@ class SwapRequest(BaseModel):
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=4)
 
-# ---- Utility ----
-def url_to_image(url: str) -> np.ndarray:
+# ---- Utility: URL to image with resizing + validation ----
+def url_to_image(url: str, max_size: int = 768) -> np.ndarray:
     try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        img_array = np.asarray(bytearray(resp.content), dtype="uint8")
-        return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download image: {url} | {e}")
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
 
+        # Load with PIL
+        pil_image = Image.open(BytesIO(response.content)).convert("RGB")
+        w, h = pil_image.size
+
+        # Reject very small images
+        if w < 128 or h < 128:
+            raise ValueError("Image too small (<128x128)")
+
+        # Resize if needed
+        if max(w, h) > max_size:
+            scale = max_size / max(w, h)
+            pil_image = pil_image.resize((int(w * scale), int(h * scale)))
+
+        # Convert to OpenCV BGR
+        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load image from {url} | {e}")
+
+# ---- Face swap + enhancement per variation ----
 def process_variation(src_face, page_number, variation: VariationInput):
     try:
         target_img = url_to_image(variation.target_image_url)
@@ -110,12 +128,16 @@ def process_variation(src_face, page_number, variation: VariationInput):
 
         swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
 
-        _, _, enhanced = gfpgan.enhance(
-            swapped,
-            has_aligned=False,
-            only_center_face=True,
-            paste_back=True
-        )
+        try:
+            _, _, enhanced = gfpgan.enhance(
+                swapped,
+                has_aligned=False,
+                only_center_face=True,
+                paste_back=True
+            )
+        except Exception as e:
+            print(f"⚠️ GFPGAN failed on variation {variation.variation}: {e}")
+            enhanced = swapped  # fallback to face-swapped image
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             cv2.imwrite(tmp.name, enhanced)
