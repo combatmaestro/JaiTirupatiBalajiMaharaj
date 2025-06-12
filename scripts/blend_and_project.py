@@ -13,7 +13,6 @@ def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
     encoder = E4EEncoder(e4e_path, device=device)
     generator = StyleGAN2Generator(stylegan_path, device=device)
 
-    # Convert all images to PIL.Image
     pil_images = []
     for img in image_list:
         if isinstance(img, np.ndarray):
@@ -23,19 +22,20 @@ def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
         else:
             raise ValueError("Unsupported image type in get_blended_face")
 
-    # Encode images to latent vectors
     latents = [encoder.encode(pil_img) for pil_img in pil_images]
-    avg_latent = average_latents(latents)  # Expect shape [1, 512]
-    print("🧪 avg_latent shape BEFORE unsqueeze:", avg_latent.shape)
+    avg_latent = average_latents(latents)  # [1, 512]
 
-    if avg_latent.ndim == 2:
-        avg_latent = avg_latent.unsqueeze(1)  # [1, 1, 512]
+    # ✅ Ensure it's shape [1, 1, 512]
+    if avg_latent.ndim == 1:
+        avg_latent = avg_latent.unsqueeze(0).unsqueeze(0)
+    elif avg_latent.ndim == 2:
+        avg_latent = avg_latent.unsqueeze(1)
+    elif avg_latent.ndim != 3:
+        raise ValueError(f"Unexpected latent shape: {avg_latent.shape}")
 
-    print("✅ avg_latent shape AFTER unsqueeze:", avg_latent.shape)
-    repeated_latent = avg_latent.repeat(1, generator.n_latent, 1)  # [1, 18, 512]
-
+    # ✅ Repeat to match [1, 18, 512]
+    repeated_latent = avg_latent.repeat(1, generator.n_latent, 1)
 
     result_image = generator.synthesize(repeated_latent)
 
-    # Convert result to OpenCV format (BGR)
     return cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
