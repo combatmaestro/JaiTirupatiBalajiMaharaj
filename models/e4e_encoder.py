@@ -39,6 +39,10 @@ class E4EEncoder:
     def encode(self, image: Image.Image):
         img_tensor = self.transform(image).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            _, latent = self.model(img_tensor, return_latents=True)
-        return latent
+            result = self.model(img_tensor, input_code=False, return_latents=True)
+            if isinstance(result, tuple):
+                _, latent = result
+            else:
+                latent = result
+        return latent  # [1, 18, 512]
 
