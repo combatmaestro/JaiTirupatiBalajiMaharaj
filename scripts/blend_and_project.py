@@ -27,6 +27,10 @@ def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
     latents = [encoder.encode(pil_img) for pil_img in pil_images]
     avg_latent = average_latents(latents)  # [1, 512]
 
+    # Ensure latent shape is [1, 1, 512] before repeating
+    if avg_latent.ndim == 2:
+        avg_latent = avg_latent.unsqueeze(1)  # [1, 1, 512]
+
     # StyleGAN2 expects [1, 18, 512]
     repeated_latent = avg_latent.repeat(1, generator.n_latent, 1)  # [1, 18, 512]
 
