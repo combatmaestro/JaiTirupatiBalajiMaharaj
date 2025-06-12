@@ -36,8 +36,8 @@ class E4EEncoder:
             transforms.Normalize([0.5] * 3, [0.5] * 3)
         ])
 
-    def encode(self, image: Image.Image):
-        img_tensor = self.transform(image).unsqueeze(0).to(self.device)
+   def encode(self, image: Image.Image):
+        img_tensor = self.transform(image).unsqueeze(0).to(self.device)  # Shape: [1, 3, 256, 256]
         with torch.no_grad():
             result = self.model(img_tensor, input_code=False, return_latents=True)
             if isinstance(result, tuple):
@@ -45,12 +45,14 @@ class E4EEncoder:
             else:
                 latent = result
 
-        # Fix: Remove extra batch dim if accidentally present
-        if latent.ndim == 4 and latent.shape[0] == 1:
-            latent = latent.squeeze(0)  # From [1, 1, 18, 512] → [1, 18, 512]
-        elif latent.ndim == 3 and latent.shape[1] == 1:
-            latent = latent.squeeze(1)  # From [1, 1, 512] → [1, 512] (for W space)
+        # 🔥 Fix the latent shape here
+        while latent.ndim > 3:  # Remove extra batch or singleton dimensions
+            latent = latent.squeeze(0)
 
-        return latent
+        if latent.ndim == 2:  # [18, 512] → [1, 18, 512]
+            latent = latent.unsqueeze(0)
+
+        return latent  # Final shape: [1, 18, 512]
+
 
 
