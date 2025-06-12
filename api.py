@@ -49,7 +49,7 @@ if not os.path.exists(GFPGAN_PATH):
 # ---- Determine Execution Providers ----
 available_providers = ort.get_available_providers()
 preferred_providers = ['CUDAExecutionProvider'] if 'CUDAExecutionProvider' in available_providers else ['CPUExecutionProvider']
-print(f"✅ Using execution provider: {preferred_providers[0]}")
+print(f"🚀 Using ONNX Runtime provider: {preferred_providers[0]}")
 
 # ---- Initialize Models ----
 face_analyzer = FaceAnalysis(
@@ -97,8 +97,8 @@ def url_to_image(url: str) -> np.ndarray:
         resp.raise_for_status()
         img_array = np.asarray(bytearray(resp.content), dtype="uint8")
         return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
-    except:
-        raise HTTPException(status_code=400, detail=f"Failed to download image: {url}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to download image: {url} | {e}")
 
 def process_variation(src_face, page_number, variation: VariationInput):
     try:
