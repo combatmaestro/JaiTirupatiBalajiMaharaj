@@ -31,39 +31,50 @@ GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
 
 # ---- Download if Missing ----
 if not os.path.exists(INSWAPPER_PATH):
-    print("📥 Downloading inswapper_128.onnx...")
+    print("\U0001F4E5 Downloading inswapper_128.onnx...")
     import urllib.request
     urllib.request.urlretrieve(
         'https://huggingface.co/combatmaestro/inswapper_128.onxx/resolve/main/inswapper_128.onnx',
         INSWAPPER_PATH
     )
-    print("✅ inswapper_128.onnx downloaded.")
+    print("\u2705 inswapper_128.onnx downloaded.")
 
 if not os.path.exists(GFPGAN_PATH):
-    print("📥 Downloading GFPGANv1.4.pth...")
+    print("\U0001F4E5 Downloading GFPGANv1.4.pth...")
     import urllib.request
     urllib.request.urlretrieve(
         'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
         GFPGAN_PATH
     )
-    print("✅ GFPGANv1.4.pth downloaded.")
+    print("\u2705 GFPGANv1.4.pth downloaded.")
 
 # ---- Determine Execution Providers ----
 available_providers = ort.get_available_providers()
 use_cuda = 'CUDAExecutionProvider' in available_providers
 preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_cuda else ['CPUExecutionProvider']
-print(f"🚀 Available Providers: {available_providers}")
-print(f"✅ Using: {preferred_providers[0]}")
+print(f"\U0001F680 Available Providers: {available_providers}")
+print(f"\u2705 Using: {preferred_providers[0]}")
 
 # ---- Initialize Models ----
-face_analyzer = FaceAnalysis(
-    name='buffalo_l',
-    root=MODEL_DIR,
-    download=False,
-    allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
-    providers=preferred_providers
-)
-face_analyzer.prepare(ctx_id=0 if use_cuda else -1, det_size=(640, 640))
+try:
+    face_analyzer = FaceAnalysis(
+        name='buffalo_l',
+        root=MODEL_DIR,
+        download=False,
+        allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
+        providers=["CUDAExecutionProvider"] if use_cuda else ["CPUExecutionProvider"]
+    )
+    face_analyzer.prepare(ctx_id=0 if use_cuda else -1, det_size=(640, 640))
+except Exception as e:
+    print(f"❌ InsightFace GPU load failed, fallback to CPU: {e}")
+    face_analyzer = FaceAnalysis(
+        name='buffalo_l',
+        root=MODEL_DIR,
+        download=False,
+        allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
+        providers=["CPUExecutionProvider"]
+    )
+    face_analyzer.prepare(ctx_id=-1, det_size=(640, 640))
 
 swapper = get_model(INSWAPPER_PATH, providers=preferred_providers)
 
