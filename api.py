@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import onnxruntime as ort
 from PIL import Image
 from io import BytesIO
-
+import traceback
 from scripts.blend_and_project import get_blended_face
 
 # ---- Cloudinary Configuration ----
@@ -183,4 +183,6 @@ async def swap_batch(data: SwapRequest):
         return {"pages": output}
 
     except Exception as e:
+        print("❌ Exception in /swap-batch:")
+        traceback.print_exc()  # 🔥 Logs the full Python error traceback
         raise HTTPException(status_code=500, detail=f"❌ Error: {str(e)}")
