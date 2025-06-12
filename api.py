@@ -105,6 +105,10 @@ def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=
     latent = latent.clone().detach().requires_grad_(True)
     optimizer = torch.optim.Adam([latent], lr=lr)
 
+    target_emb_tensor = torch.tensor(target_emb, dtype=torch.float32)
+    if use_cuda:
+        target_emb_tensor = target_emb_tensor.cuda()
+
     for _ in range(steps):
         optimizer.zero_grad()
         synth = generator.synthesize(latent)
@@ -119,9 +123,13 @@ def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=
         faces = face_analyzer.get(synth_bgr)
         if not faces:
             continue
-        emb = torch.tensor(faces[0].embedding, dtype=torch.float32).to(latent.device)
-        target_emb_tensor = torch.tensor(target_emb, dtype=torch.float32).to(latent.device)
-        id_loss = 1 - torch.nn.functional.cosine_similarity(emb.unsqueeze(0), target_emb_tensor.unsqueeze(0)).mean()
+
+        emb_np = faces[0].embedding
+        emb_tensor = torch.tensor(emb_np, dtype=torch.float32, requires_grad=True)
+        if use_cuda:
+            emb_tensor = emb_tensor.cuda()
+
+        id_loss = 1 - torch.nn.functional.cosine_similarity(emb_tensor.unsqueeze(0), target_emb_tensor.unsqueeze(0)).mean()
         id_loss.backward()
         optimizer.step()
 
