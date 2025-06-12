@@ -38,18 +38,26 @@ class E4EEncoder:
 
     def encode(self, image: Image.Image):
         img_tensor = self.transform(image).unsqueeze(0).to(self.device)  # Shape: [1, 3, 256, 256]
+        print(f"📥 Encoding image... Input tensor shape: {img_tensor.shape}")
+
         with torch.no_grad():
             result = self.model(img_tensor, input_code=False, return_latents=True)
-            if isinstance(result, tuple):
-                _, latent = result
-            else:
-                latent = result
+
+        if isinstance(result, tuple):
+            _, latent = result
+        else:
+            latent = result
+
+        print(f"🔍 Raw latent shape from model: {latent.shape}")
 
         # 🔥 Fix the latent shape here
-        while latent.ndim > 3:  # Remove extra batch or singleton dimensions
+        while latent.ndim > 3:
             latent = latent.squeeze(0)
+            print(f"✂️ Squeezing latent, new shape: {latent.shape}")
 
-        if latent.ndim == 2:  # [18, 512] → [1, 18, 512]
+        if latent.ndim == 2:
             latent = latent.unsqueeze(0)
+            print(f"📦 Unsqueezed to final shape: {latent.shape}")
 
+        print(f"✅ Final latent shape: {latent.shape}")
         return latent  # Final shape: [1, 18, 512]
