@@ -36,7 +36,7 @@ class E4EEncoder:
             transforms.Normalize([0.5] * 3, [0.5] * 3)
         ])
 
-   def encode(self, image: Image.Image):
+    def encode(self, image: Image.Image):
         img_tensor = self.transform(image).unsqueeze(0).to(self.device)  # Shape: [1, 3, 256, 256]
         with torch.no_grad():
             result = self.model(img_tensor, input_code=False, return_latents=True)
@@ -53,6 +53,3 @@ class E4EEncoder:
             latent = latent.unsqueeze(0)
 
         return latent  # Final shape: [1, 18, 512]
-
-
-
