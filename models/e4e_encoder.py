@@ -44,5 +44,13 @@ class E4EEncoder:
                 _, latent = result
             else:
                 latent = result
-        return latent  # [1, 18, 512]
+
+        # Fix: Remove extra batch dim if accidentally present
+        if latent.ndim == 4 and latent.shape[0] == 1:
+            latent = latent.squeeze(0)  # From [1, 1, 18, 512] → [1, 18, 512]
+        elif latent.ndim == 3 and latent.shape[1] == 1:
+            latent = latent.squeeze(1)  # From [1, 1, 512] → [1, 512] (for W space)
+
+        return latent
+
 
