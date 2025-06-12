@@ -18,12 +18,12 @@ class StyleGAN2Generator:
         except Exception as e:
             raise RuntimeError(f"Failed to load the model from {model_path}: {e}")
 
-        if isinstance(ckpt, dict) and 'G_ema' in ckpt:
-            self.g = ckpt['G_ema'].to(device)
+        if isinstance(ckpt, dict) and 'g_ema' in ckpt:
+            self.g = ckpt['g_ema'].to(device)
         elif hasattr(ckpt, 'to'):  # sometimes torch.load returns a nn.Module directly
             self.g = ckpt.to(device)
         else:
-            raise TypeError("Loaded model is not in expected format (dict with 'G_ema' or model object).")
+            raise TypeError("Loaded model is not in expected format (dict with 'g_ema' or model object).")
 
         self.g.eval()
 
