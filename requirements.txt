@@ -8,3 +8,9 @@ numpy==1.24.4
 requests
 pydantic
 gfpgan
+
+torch>=1.13.1
+torchvision
+tqdm
+scikit-image
+Pillow
