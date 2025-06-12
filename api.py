@@ -58,12 +58,12 @@ face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
     download=False,
-    providers=preferred_providers[0],
+    providers=[preferred_providers[0]],
     allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"]
 )
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 
-swapper = get_model(INSWAPPER_PATH, providers=preferred_providers[0])
+swapper = get_model(INSWAPPER_PATH, providers=[preferred_providers[0]])
 
 gfpgan = GFPGANer(
     model_path=GFPGAN_PATH,
@@ -71,7 +71,7 @@ gfpgan = GFPGANer(
     arch='clean',
     channel_multiplier=2,
     bg_upsampler=None,
-    device='cuda' if 'CUDAExecutionProvider' in preferred_providers[0] else 'cpu'
+    device='cuda' if 'CUDAExecutionProvider' in [preferred_providers[0]] else 'cpu'
 )
 
 # ---- FastAPI Models ----
