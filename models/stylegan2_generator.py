@@ -1,5 +1,7 @@
 import os
 import torch
+import pickle
+from models.stylegan2.model import Generator  # <- Make sure this path exists
 
 class StyleGAN2Generator:
     def __init__(self, model_path='models/stylegan2-ffhq-config-f.pt', device='cuda'):
@@ -12,23 +14,15 @@ class StyleGAN2Generator:
                 model_path
             )
 
+        ckpt = torch.load(model_path, map_location=device)
+
         self.device = device
-        try:
-            ckpt = torch.load(model_path, map_location=device)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load the model from {model_path}: {e}")
-
-        if isinstance(ckpt, dict) and 'g_ema' in ckpt:
-            self.g = ckpt['g_ema'].to(device)
-        elif hasattr(ckpt, 'to'):  # sometimes torch.load returns a nn.Module directly
-            self.g = ckpt.to(device)
-        else:
-            raise TypeError("Loaded model is not in expected format (dict with 'g_ema' or model object).")
-
-        self.g.eval()
+        self.g = Generator(1024, 512, 8)  # FFHQ: 1024 resolution, 512 latent, 8 mapping layers
+        self.g.load_state_dict(ckpt['g_ema'])
+        self.g.to(device).eval()
 
     def synthesize(self, latent):
         with torch.no_grad():
-            img_tensor = self.g(latent, None)
+            img_tensor, _ = self.g([latent], input_is_latent=True, randomize_noise=False)
         img = ((img_tensor.clamp(-1, 1) + 1) / 2 * 255).permute(0, 2, 3, 1).squeeze().cpu().numpy()
         return img.astype('uint8')
