@@ -12,6 +12,7 @@ from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
 from gfpgan import GFPGANer
 from concurrent.futures import ThreadPoolExecutor
+import onnxruntime as ort
 
 # ---- Cloudinary Configuration ----
 cloud_config(
@@ -45,17 +46,22 @@ if not os.path.exists(GFPGAN_PATH):
     )
     print("✅ GFPGANv1.4.pth downloaded.")
 
-# ---- Initialize Models (once) ----
+# ---- Determine Execution Providers ----
+available_providers = ort.get_available_providers()
+preferred_providers = ['CUDAExecutionProvider'] if 'CUDAExecutionProvider' in available_providers else ['CPUExecutionProvider']
+print(f"✅ Using execution provider: {preferred_providers[0]}")
+
+# ---- Initialize Models ----
 face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
     download=False,
-    providers=['CUDAExecutionProvider'],
+    providers=preferred_providers,
     allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"]
 )
 face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
 
-swapper = get_model(INSWAPPER_PATH, providers=['CUDAExecutionProvider'])
+swapper = get_model(INSWAPPER_PATH, providers=preferred_providers)
 
 gfpgan = GFPGANer(
     model_path=GFPGAN_PATH,
@@ -63,7 +69,7 @@ gfpgan = GFPGANer(
     arch='clean',
     channel_multiplier=2,
     bg_upsampler=None,
-    device='cuda'
+    device='cuda' if 'CUDAExecutionProvider' in preferred_providers else 'cpu'
 )
 
 # ---- FastAPI Models ----
@@ -107,7 +113,7 @@ def process_variation(src_face, page_number, variation: VariationInput):
         _, _, enhanced = gfpgan.enhance(
             swapped,
             has_aligned=False,
-            only_center_face=False,
+            only_center_face=True,
             paste_back=True
         )
 
