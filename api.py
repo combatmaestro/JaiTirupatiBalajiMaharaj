@@ -15,8 +15,6 @@ import onnxruntime as ort
 from PIL import Image
 from io import BytesIO
 import traceback
-import torch
-from torch import nn
 from models.e4e_encoder import E4EEncoder
 from models.stylegan2_generator import StyleGAN2Generator
 
@@ -100,48 +98,11 @@ def url_to_image(url: str, max_size: int = 768) -> np.ndarray:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load image from {url} | {e}")
 
-# ---- Identity-Preserving Interpolation ----
-def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=0.01):
-    latent = latent.clone().detach().requires_grad_(True)
-    optimizer = torch.optim.Adam([latent], lr=lr)
-
-    target_emb_tensor = torch.tensor(target_emb, dtype=torch.float32)
-    if use_cuda:
-        target_emb_tensor = target_emb_tensor.cuda()
-
-    for _ in range(steps):
-        optimizer.zero_grad()
-        synth = generator.synthesize(latent)
-
-        if isinstance(synth, torch.Tensor):
-            synth_np = synth.detach().cpu().squeeze().permute(1, 2, 0).numpy()
-            synth_np = (synth_np * 255).clip(0, 255).astype(np.uint8)
-        else:
-            synth_np = np.array(synth)
-
-        synth_bgr = cv2.cvtColor(synth_np, cv2.COLOR_RGB2BGR)
-        faces = face_analyzer.get(synth_bgr)
-        if not faces:
-            continue
-
-        emb_np = faces[0].embedding
-        emb_tensor = torch.tensor(emb_np, dtype=torch.float32, requires_grad=True)
-        if use_cuda:
-            emb_tensor = emb_tensor.cuda()
-
-        id_loss = 1 - torch.nn.functional.cosine_similarity(emb_tensor.unsqueeze(0), target_emb_tensor.unsqueeze(0)).mean()
-        id_loss.backward()
-        optimizer.step()
-
-    return latent.detach()
-
-# ---- New Blending Logic: Interpolated + Optimized Head ----
+# ---- New Blending Logic: Interpolated Head ----
 def interpolate_and_generate_head(source_img: np.ndarray, target_img: np.ndarray, stylegan_path, e4e_path, alpha=0.6):
     device = 'cuda' if use_cuda else 'cpu'
     encoder = E4EEncoder(e4e_path, device=device)
     generator = StyleGAN2Generator(stylegan_path, device=device)
-    face_analyzer = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider'] if use_cuda else ['CPUExecutionProvider'])
-    face_analyzer.prepare(ctx_id=0 if use_cuda else -1)
 
     source_pil = Image.fromarray(cv2.cvtColor(source_img, cv2.COLOR_BGR2RGB)).resize((256, 256))
     target_pil = Image.fromarray(cv2.cvtColor(target_img, cv2.COLOR_BGR2RGB)).resize((256, 256))
@@ -153,10 +114,7 @@ def interpolate_and_generate_head(source_img: np.ndarray, target_img: np.ndarray
     if blended_latent.ndim == 2:
         blended_latent = blended_latent.unsqueeze(1).repeat(1, 18, 1)
 
-    ref_embedding = face_analyzer.get(source_img)[0].embedding
-    optimized_latent = optimize_identity(generator, blended_latent, ref_embedding, face_analyzer)
-
-    result_image = generator.synthesize(optimized_latent)
+    result_image = generator.synthesize(blended_latent)
     return cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
 
 # ---- Face blend + enhance ----
@@ -165,6 +123,7 @@ def process_variation(source_img: np.ndarray, page_number, variation: VariationI
         target_img = url_to_image(variation.target_image_url)
         head = interpolate_and_generate_head(source_img, target_img, STYLEGAN_PATH, E4E_ENCODER_PATH)
 
+        # Resize generated face to match region of interest (simple center overlay for now)
         h, w, _ = target_img.shape
         face_resized = cv2.resize(head, (w // 2, h // 2))
         x_offset = w // 4
@@ -188,7 +147,7 @@ def process_variation(source_img: np.ndarray, page_number, variation: VariationI
 async def swap_batch(data: SwapRequest):
     try:
         src_faces = [cv2.cvtColor(url_to_image(url), cv2.COLOR_BGR2RGB) for url in data.face_image_urls]
-        source_img = src_faces[0]
+        source_img = src_faces[0]  # Use first image for interpolation
 
         output = []
         for page in data.pages:
