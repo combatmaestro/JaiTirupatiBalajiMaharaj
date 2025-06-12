@@ -50,20 +50,22 @@ if not os.path.exists(GFPGAN_PATH):
 
 # ---- Determine Execution Providers ----
 available_providers = ort.get_available_providers()
-preferred_providers = ['CUDAExecutionProvider'] if 'CUDAExecutionProvider' in available_providers else ['CPUExecutionProvider']
-print(f"🚀 Using ONNX Runtime provider: {preferred_providers[0]}")
+use_cuda = 'CUDAExecutionProvider' in available_providers
+preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_cuda else ['CPUExecutionProvider']
+print(f"🚀 Available Providers: {available_providers}")
+print(f"✅ Using: {preferred_providers[0]}")
 
 # ---- Initialize Models ----
 face_analyzer = FaceAnalysis(
     name='buffalo_l',
     root=MODEL_DIR,
     download=False,
-    providers=[preferred_providers[0]],
-    allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"]
+    allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
+    providers=preferred_providers
 )
-face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
+face_analyzer.prepare(ctx_id=0 if use_cuda else -1, det_size=(640, 640))
 
-swapper = get_model(INSWAPPER_PATH, providers=[preferred_providers[0]])
+swapper = get_model(INSWAPPER_PATH, providers=preferred_providers)
 
 gfpgan = GFPGANer(
     model_path=GFPGAN_PATH,
@@ -71,7 +73,7 @@ gfpgan = GFPGANer(
     arch='clean',
     channel_multiplier=2,
     bg_upsampler=None,
-    device='cuda' if 'CUDAExecutionProvider' in [preferred_providers[0]] else 'cpu'
+    device='cuda' if use_cuda else 'cpu'
 )
 
 # ---- FastAPI Models ----
@@ -92,38 +94,33 @@ class SwapRequest(BaseModel):
 app = FastAPI()
 executor = ThreadPoolExecutor(max_workers=4)
 
-# ---- Utility: URL to image with resizing + validation ----
+# ---- Utility: Load URL image safely ----
 def url_to_image(url: str, max_size: int = 768) -> np.ndarray:
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
 
-        # Load with PIL
         pil_image = Image.open(BytesIO(response.content)).convert("RGB")
         w, h = pil_image.size
-
-        # Reject very small images
         if w < 128 or h < 128:
-            raise ValueError("Image too small (<128x128)")
+            raise ValueError("Image too small")
 
-        # Resize if needed
         if max(w, h) > max_size:
             scale = max_size / max(w, h)
             pil_image = pil_image.resize((int(w * scale), int(h * scale)))
 
-        # Convert to OpenCV BGR
         return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load image from {url} | {e}")
 
-# ---- Face swap + enhancement per variation ----
+# ---- Face swap + enhance ----
 def process_variation(src_face, page_number, variation: VariationInput):
     try:
         target_img = url_to_image(variation.target_image_url)
         target_faces = face_analyzer.get(target_img)
         if not target_faces:
-            print(f"❌ No face in target image: {variation.target_image_url}")
+            print(f"❌ No face in: {variation.target_image_url}")
             return variation.variation, None
 
         swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
@@ -136,8 +133,8 @@ def process_variation(src_face, page_number, variation: VariationInput):
                 paste_back=True
             )
         except Exception as e:
-            print(f"⚠️ GFPGAN failed on variation {variation.variation}: {e}")
-            enhanced = swapped  # fallback to face-swapped image
+            print(f"⚠️ GFPGAN fallback for {variation.variation}: {e}")
+            enhanced = swapped
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             cv2.imwrite(tmp.name, enhanced)
@@ -145,7 +142,7 @@ def process_variation(src_face, page_number, variation: VariationInput):
             return variation.variation, uploaded["secure_url"]
 
     except Exception as e:
-        print(f"❌ Error processing {variation.variation}: {e}")
+        print(f"❌ Error in {variation.variation}: {e}")
         return variation.variation, None
 
 # ---- Endpoint ----
