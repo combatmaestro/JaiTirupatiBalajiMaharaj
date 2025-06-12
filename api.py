@@ -16,6 +16,8 @@ import onnxruntime as ort
 from PIL import Image
 from io import BytesIO
 
+from scripts.blend_and_project import get_blended_face
+
 # ---- Cloudinary Configuration ----
 cloud_config(
     cloud_name="djpclyujw",
@@ -28,27 +30,27 @@ cloud_config(
 MODEL_DIR = 'models'
 INSWAPPER_PATH = os.path.join(MODEL_DIR, 'inswapper_128.onnx')
 GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
+STYLEGAN_PATH = os.path.join(MODEL_DIR, 'stylegan2-ffhq-config-f.pt')
+E4E_ENCODER_PATH = os.path.join(MODEL_DIR, 'e4e_ffhq_encode.pt')
 
 # ---- Download if Missing ----
-if not os.path.exists(INSWAPPER_PATH):
-    print("\U0001F4E5 Downloading inswapper_128.onnx...")
-    import urllib.request
-    urllib.request.urlretrieve(
-        'https://huggingface.co/combatmaestro/inswapper_128.onxx/resolve/main/inswapper_128.onnx',
-        INSWAPPER_PATH
-    )
-    print("\u2705 inswapper_128.onnx downloaded.")
+def download_if_missing():
+    files = {
+        INSWAPPER_PATH: 'https://huggingface.co/combatmaestro/inswapper_128.onxx/resolve/main/inswapper_128.onnx',
+        GFPGAN_PATH: 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
+        STYLEGAN_PATH: 'https://huggingface.co/Awesimo/jojogan/resolve/main/stylegan2-ffhq-config-f.pt',
+        E4E_ENCODER_PATH: 'https://huggingface.co/AIRI-Institute/HairFastGAN/resolve/main/pretrained_models/encoder4editing/e4e_ffhq_encode.pt'
+    }
+    for path, url in files.items():
+        if not os.path.exists(path):
+            print(f"\U0001F4E5 Downloading {os.path.basename(path)}...")
+            import urllib.request
+            urllib.request.urlretrieve(url, path)
+            print(f"\u2705 {os.path.basename(path)} downloaded.")
 
-if not os.path.exists(GFPGAN_PATH):
-    print("\U0001F4E5 Downloading GFPGANv1.4.pth...")
-    import urllib.request
-    urllib.request.urlretrieve(
-        'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
-        GFPGAN_PATH
-    )
-    print("\u2705 GFPGANv1.4.pth downloaded.")
+# ---- Setup ----
+download_if_missing()
 
-# ---- Determine Execution Providers ----
 available_providers = ort.get_available_providers()
 use_cuda = 'CUDAExecutionProvider' in available_providers
 preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_cuda else ['CPUExecutionProvider']
@@ -98,7 +100,7 @@ class PageInput(BaseModel):
     variations: List[VariationInput]
 
 class SwapRequest(BaseModel):
-    face_image_url: str
+    face_image_urls: List[str]
     pages: List[PageInput]
 
 # ---- App ----
@@ -110,23 +112,19 @@ def url_to_image(url: str, max_size: int = 768) -> np.ndarray:
     try:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-
         pil_image = Image.open(BytesIO(response.content)).convert("RGB")
         w, h = pil_image.size
         if w < 128 or h < 128:
             raise ValueError("Image too small")
-
         if max(w, h) > max_size:
             scale = max_size / max(w, h)
             pil_image = pil_image.resize((int(w * scale), int(h * scale)))
-
         return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load image from {url} | {e}")
 
 # ---- Face swap + enhance ----
-def process_variation(src_face, page_number, variation: VariationInput):
+def process_variation(blended_face: np.ndarray, page_number, variation: VariationInput):
     try:
         target_img = url_to_image(variation.target_image_url)
         target_faces = face_analyzer.get(target_img)
@@ -134,14 +132,12 @@ def process_variation(src_face, page_number, variation: VariationInput):
             print(f"❌ No face in: {variation.target_image_url}")
             return variation.variation, None
 
-        swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
+        swapped = swapper.get(target_img, target_faces[0], blended_face, paste_back=True)
 
-        # Basic validation
         if swapped is None or not isinstance(swapped, np.ndarray):
             print(f"⚠️ Swapped image invalid for {variation.variation}")
             return variation.variation, None
 
-        # Try enhancement ONLY – skip variation if GFPGAN fails
         try:
             _, _, enhanced = gfpgan.enhance(
                 swapped,
@@ -151,9 +147,8 @@ def process_variation(src_face, page_number, variation: VariationInput):
             )
         except Exception as e:
             print(f"⚠️ GFPGAN failed for {variation.variation}: {e}")
-            return variation.variation, None  # Don't return fallback
+            return variation.variation, None
 
-        # Final validation before upload
         if enhanced is None or not isinstance(enhanced, np.ndarray):
             print(f"❌ Enhanced image invalid for {variation.variation}")
             return variation.variation, None
@@ -171,31 +166,18 @@ def process_variation(src_face, page_number, variation: VariationInput):
 @app.post("/swap-batch")
 async def swap_batch(data: SwapRequest):
     try:
-        source_img = url_to_image(data.face_image_url)
-        source_faces = face_analyzer.get(source_img)
-        if not source_faces:
-            raise HTTPException(status_code=400, detail="❌ No face found in face_image_url")
-        src_face = source_faces[0]
+        src_faces = [url_to_image(url) for url in data.face_image_urls]
+        blended_face = get_blended_face(src_faces, STYLEGAN_PATH, E4E_ENCODER_PATH, use_cuda)
 
         output = []
-
         for page in data.pages:
-            page_result = {
-                "pageNumber": page.pageNumber,
-                "text": page.text,
-                "variations": {}
-            }
-
-            futures = [
-                executor.submit(process_variation, src_face, page.pageNumber, variation)
-                for variation in page.variations
-            ]
-
+            page_result = {"pageNumber": page.pageNumber, "text": page.text, "variations": {}}
+            futures = [executor.submit(process_variation, blended_face, page.pageNumber, variation)
+                       for variation in page.variations]
             for future in futures:
                 var_name, var_url = future.result()
                 if var_url:
                     page_result["variations"][var_name] = var_url
-
             output.append(page_result)
 
         return {"pages": output}
