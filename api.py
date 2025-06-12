@@ -9,13 +9,14 @@ from typing import List
 from cloudinary.uploader import upload as cloud_upload
 from cloudinary import config as cloud_config
 from insightface.app import FaceAnalysis
-from insightface.model_zoo import get_model
 from gfpgan import GFPGANer
 from concurrent.futures import ThreadPoolExecutor
 import onnxruntime as ort
 from PIL import Image
 from io import BytesIO
 import traceback
+import torch
+from torch import nn
 from models.e4e_encoder import E4EEncoder
 from models.stylegan2_generator import StyleGAN2Generator
 
@@ -29,7 +30,6 @@ cloud_config(
 
 # ---- Model Paths ----
 MODEL_DIR = 'models'
-INSWAPPER_PATH = os.path.join(MODEL_DIR, 'inswapper_128.onnx')
 GFPGAN_PATH = os.path.join(MODEL_DIR, 'GFPGANv1.4.pth')
 STYLEGAN_PATH = os.path.join(MODEL_DIR, 'stylegan2-ffhq-config-f.pt')
 E4E_ENCODER_PATH = os.path.join(MODEL_DIR, 'e4e_ffhq_encode.pt')
@@ -37,7 +37,6 @@ E4E_ENCODER_PATH = os.path.join(MODEL_DIR, 'e4e_ffhq_encode.pt')
 # ---- Download if Missing ----
 def download_if_missing():
     files = {
-        INSWAPPER_PATH: 'https://huggingface.co/combatmaestro/inswapper_128.onxx/resolve/main/inswapper_128.onnx',
         GFPGAN_PATH: 'https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth',
         STYLEGAN_PATH: 'https://huggingface.co/Awesimo/jojogan/resolve/main/stylegan2-ffhq-config-f.pt',
         E4E_ENCODER_PATH: 'https://huggingface.co/AIRI-Institute/HairFastGAN/resolve/main/pretrained_models/encoder4editing/e4e_ffhq_encode.pt'
@@ -54,33 +53,10 @@ download_if_missing()
 
 available_providers = ort.get_available_providers()
 use_cuda = 'CUDAExecutionProvider' in available_providers
-preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if use_cuda else ['CPUExecutionProvider']
 print(f"\U0001F680 Available Providers: {available_providers}")
-print(f"✅ Using: {preferred_providers[0]}")
+print(f"✅ Using: {'cuda' if use_cuda else 'cpu'}")
 
 # ---- Initialize Models ----
-try:
-    face_analyzer = FaceAnalysis(
-        name='buffalo_l',
-        root=MODEL_DIR,
-        download=False,
-        allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
-        providers=["CUDAExecutionProvider"] if use_cuda else ["CPUExecutionProvider"]
-    )
-    face_analyzer.prepare(ctx_id=0 if use_cuda else -1, det_size=(640, 640))
-except Exception as e:
-    print(f"❌ InsightFace GPU load failed, fallback to CPU: {e}")
-    face_analyzer = FaceAnalysis(
-        name='buffalo_l',
-        root=MODEL_DIR,
-        download=False,
-        allowed_modules=["detection", "recognition", "landmark_2d_106", "landmark_3d_68"],
-        providers=["CPUExecutionProvider"]
-    )
-    face_analyzer.prepare(ctx_id=-1, det_size=(640, 640))
-
-swapper = get_model(INSWAPPER_PATH, providers=preferred_providers)
-
 gfpgan = GFPGANer(
     model_path=GFPGAN_PATH,
     upscale=1,
@@ -124,68 +100,63 @@ def url_to_image(url: str, max_size: int = 768) -> np.ndarray:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load image from {url} | {e}")
 
-# ---- Blending Logic ----
-def get_blended_face(image_list, stylegan_path, e4e_path, use_cuda):
-    def cosine_similarity(a, b):
-        a_norm = a / np.linalg.norm(a)
-        b_norm = b / np.linalg.norm(b)
-        return np.dot(a_norm, b_norm)
+# ---- Identity-Preserving Interpolation ----
+def optimize_identity(generator, latent, target_emb, face_analyzer, steps=2, lr=0.01):
+    latent = latent.clone().detach().requires_grad_(True)
+    optimizer = torch.optim.Adam([latent], lr=lr)
 
+    for _ in range(steps):
+        optimizer.zero_grad()
+        synth = generator.synthesize(latent)
+        synth_np = cv2.cvtColor(np.array(synth.detach().cpu().squeeze().permute(1,2,0).numpy()*255, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+        faces = face_analyzer.get(synth_np)
+        if not faces:
+            continue
+        emb = torch.tensor(faces[0].embedding, dtype=torch.float32).to(latent.device)
+        target_emb_tensor = torch.tensor(target_emb, dtype=torch.float32).to(latent.device)
+        id_loss = 1 - torch.nn.functional.cosine_similarity(emb.unsqueeze(0), target_emb_tensor.unsqueeze(0)).mean()
+        id_loss.backward()
+        optimizer.step()
+    return latent.detach()
+
+# ---- New Blending Logic: Interpolated + Optimized Head ----
+def interpolate_and_generate_head(source_img: np.ndarray, target_img: np.ndarray, stylegan_path, e4e_path, alpha=0.6):
     device = 'cuda' if use_cuda else 'cpu'
     encoder = E4EEncoder(e4e_path, device=device)
     generator = StyleGAN2Generator(stylegan_path, device=device)
-
-    pil_images = []
-    for img in image_list:
-        if isinstance(img, np.ndarray):
-            pil_images.append(Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
-        elif isinstance(img, Image.Image):
-            pil_images.append(img)
-
-    latents = [encoder.encode(pil_img) for pil_img in pil_images]
-
     face_analyzer = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider'] if use_cuda else ['CPUExecutionProvider'])
     face_analyzer.prepare(ctx_id=0 if use_cuda else -1)
 
-    ref_embedding = face_analyzer.get(cv2.cvtColor(np.array(pil_images[0]), cv2.COLOR_RGB2BGR))[0].embedding
-    best_idx, best_score = 0, -1
+    source_pil = Image.fromarray(cv2.cvtColor(source_img, cv2.COLOR_BGR2RGB)).resize((256, 256))
+    target_pil = Image.fromarray(cv2.cvtColor(target_img, cv2.COLOR_BGR2RGB)).resize((256, 256))
 
-    for i, latent in enumerate(latents):
-        repeated = latent.unsqueeze(1).repeat(1, 18, 1) if latent.ndim == 2 else latent
-        generated_img = generator.synthesize(repeated)
-        gen_bgr = cv2.cvtColor(np.array(generated_img), cv2.COLOR_RGB2BGR)
-        faces = face_analyzer.get(gen_bgr)
-        if not faces:
-            continue
-        emb = faces[0].embedding
-        score = cosine_similarity(ref_embedding, emb)
-        if score > best_score:
-            best_score, best_idx = score, i
+    source_latent = encoder.encode(source_pil)
+    target_latent = encoder.encode(target_pil)
 
-    best_latent = latents[best_idx]
-    repeated_latent = best_latent.unsqueeze(1).repeat(1, 18, 1) if best_latent.ndim == 2 else best_latent
-    result_image = generator.synthesize(repeated_latent)
+    blended_latent = (1 - alpha) * target_latent + alpha * source_latent
+    if blended_latent.ndim == 2:
+        blended_latent = blended_latent.unsqueeze(1).repeat(1, 18, 1)
+
+    ref_embedding = face_analyzer.get(source_img)[0].embedding
+    optimized_latent = optimize_identity(generator, blended_latent, ref_embedding, face_analyzer)
+
+    result_image = generator.synthesize(optimized_latent)
     return cv2.cvtColor(np.array(result_image), cv2.COLOR_RGB2BGR)
 
-# ---- Face swap + enhance ----
-def process_variation(blended_face: np.ndarray, page_number, variation: VariationInput):
+# ---- Face blend + enhance ----
+def process_variation(source_img: np.ndarray, page_number, variation: VariationInput):
     try:
         target_img = url_to_image(variation.target_image_url)
-        target_faces = face_analyzer.get(target_img)
-        if not target_faces:
-            return variation.variation, None
+        head = interpolate_and_generate_head(source_img, target_img, STYLEGAN_PATH, E4E_ENCODER_PATH)
 
-        blended_faces = face_analyzer.get(blended_face)
-        if not blended_faces:
-            return variation.variation, None
+        h, w, _ = target_img.shape
+        face_resized = cv2.resize(head, (w // 2, h // 2))
+        x_offset = w // 4
+        y_offset = h // 4
+        blended_img = target_img.copy()
+        blended_img[y_offset:y_offset+face_resized.shape[0], x_offset:x_offset+face_resized.shape[1]] = face_resized
 
-        swapped = swapper.get(target_img, target_faces[0], blended_faces[0], paste_back=True)
-        if swapped is None or not isinstance(swapped, np.ndarray):
-            return variation.variation, None
-
-        _, _, enhanced = gfpgan.enhance(swapped, has_aligned=False, only_center_face=True, paste_back=True)
-        if enhanced is None or not isinstance(enhanced, np.ndarray):
-            return variation.variation, None
+        _, _, enhanced = gfpgan.enhance(blended_img, has_aligned=False, only_center_face=True, paste_back=True)
 
         with tempfile.NamedTemporaryFile(suffix=f"_{page_number}_{variation.variation}.jpg", delete=False) as tmp:
             cv2.imwrite(tmp.name, enhanced)
@@ -201,12 +172,12 @@ def process_variation(blended_face: np.ndarray, page_number, variation: Variatio
 async def swap_batch(data: SwapRequest):
     try:
         src_faces = [cv2.cvtColor(url_to_image(url), cv2.COLOR_BGR2RGB) for url in data.face_image_urls]
-        blended_face = get_blended_face(src_faces, STYLEGAN_PATH, E4E_ENCODER_PATH, use_cuda)
+        source_img = src_faces[0]
 
         output = []
         for page in data.pages:
             page_result = {"pageNumber": page.pageNumber, "text": page.text, "variations": {}}
-            futures = [executor.submit(process_variation, blended_face, page.pageNumber, variation)
+            futures = [executor.submit(process_variation, source_img, page.pageNumber, variation)
                        for variation in page.variations]
             for future in futures:
                 var_name, var_url = future.result()
