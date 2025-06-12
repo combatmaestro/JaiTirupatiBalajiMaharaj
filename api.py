@@ -110,12 +110,17 @@ def process_variation(src_face, page_number, variation: VariationInput):
 
         swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
 
-        _, _, enhanced = gfpgan.enhance(
-            swapped,
-            has_aligned=False,
-            only_center_face=True,
-            paste_back=True
-        )
+        try:
+            _, _, enhanced = gfpgan.enhance(
+                swapped,
+                has_aligned=False,
+                only_center_face=True,
+                paste_back=True
+            )
+        except Exception as e:
+            print(f"⚠️ GFPGAN enhancement failed, using swapped image instead: {e}")
+            enhanced = swapped  # fallback to face-swapped image
+
 
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             cv2.imwrite(tmp.name, enhanced)
