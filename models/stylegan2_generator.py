@@ -1,22 +1,31 @@
 import os
 import torch
-import pickle
 
 class StyleGAN2Generator:
     def __init__(self, model_path='models/stylegan2-ffhq-config-f.pt', device='cuda'):
         if not os.path.exists(model_path):
             import urllib.request
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            print("\U0001F4E5 Downloading StyleGAN2 model...")
+            print("📥 Downloading StyleGAN2 model...")
             urllib.request.urlretrieve(
                 'https://huggingface.co/Awesimo/jojogan/resolve/main/stylegan2-ffhq-config-f.pt',
                 model_path
             )
 
-        with open(model_path, 'rb') as f:
-            self.g = pickle.load(f)['G_ema'].to(device)
-        self.g.eval()
         self.device = device
+        try:
+            ckpt = torch.load(model_path, map_location=device)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load the model from {model_path}: {e}")
+
+        if isinstance(ckpt, dict) and 'G_ema' in ckpt:
+            self.g = ckpt['G_ema'].to(device)
+        elif hasattr(ckpt, 'to'):  # sometimes torch.load returns a nn.Module directly
+            self.g = ckpt.to(device)
+        else:
+            raise TypeError("Loaded model is not in expected format (dict with 'G_ema' or model object).")
+
+        self.g.eval()
 
     def synthesize(self, latent):
         with torch.no_grad():
