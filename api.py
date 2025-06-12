@@ -136,6 +136,12 @@ def process_variation(src_face, page_number, variation: VariationInput):
 
         swapped = swapper.get(target_img, target_faces[0], src_face, paste_back=True)
 
+        # Basic validation
+        if swapped is None or not isinstance(swapped, np.ndarray):
+            print(f"⚠️ Swapped image invalid for {variation.variation}")
+            return variation.variation, None
+
+        # Try enhancement
         try:
             _, _, enhanced = gfpgan.enhance(
                 swapped,
@@ -143,12 +149,18 @@ def process_variation(src_face, page_number, variation: VariationInput):
                 only_center_face=True,
                 paste_back=True
             )
+            final_image = enhanced
         except Exception as e:
-            print(f"⚠️ GFPGAN fallback for {variation.variation}: {e}")
-            enhanced = swapped
+            print(f"⚠️ GFPGAN failed for {variation.variation}: {e}")
+            final_image = swapped
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            cv2.imwrite(tmp.name, enhanced)
+        # Final check before upload
+        if final_image is None or not isinstance(final_image, np.ndarray):
+            print(f"❌ Final image invalid for {variation.variation}")
+            return variation.variation, None
+
+        with tempfile.NamedTemporaryFile(suffix=f"_{page_number}_{variation.variation}.jpg", delete=False) as tmp:
+            cv2.imwrite(tmp.name, final_image)
             uploaded = cloud_upload(tmp.name)
             return variation.variation, uploaded["secure_url"]
 
